@@ -1,0 +1,14 @@
+{
+	"geode": "4.0.1",
+	"gd": {
+		"win": "2.2074",
+		"android": "2.2074",
+		"mac": "2.2074",
+		"ios": "2.2074"
+	},
+	"id": "trealdry.custombackgrounds",
+	"name": "CustomBackgrounds",
+	"version": "v1.0.0",
+	"developer": "TrealDry",
+	"description": "CustomBackgrounds is a mod that will help you replace the standard background in the main menu (where the cubes jump) with a nice picture/pictures."
+}
