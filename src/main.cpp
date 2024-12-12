@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <random>
+#include <shellapi.h>  // Only windows os, sorry =(
 #include <filesystem>
 
 #include <Geode/Geode.hpp>
@@ -14,31 +15,41 @@ namespace fs = std::filesystem;
 std::random_device rd;
 std::mt19937 gen(rd());
 
+bool firstPathInit = true;
 std::vector<std::string> backgroundPaths;
 
-enum class bgStatus {OK = 1, Transition};
-bgStatus status = bgStatus::OK;
+CCSprite *bg, *nextBg;
+CCSprite *restartBtnSpr;
+CircleButtonSprite *openFolderBtnSpr;
 
-CCSprite *bg, *next_bg;
+CCMenuItemSpriteExtra *restartBtn, *openFolderBtn;
 
 float bgOpacity = 0.f;
 
-const char* current_background_path;
+fs::path currentPath;
+const char* currentBackgroundPath;
 
+
+void initPath() {
+    currentPath = fs::current_path();
+    currentPath += "\\Resources\\backgrounds";
+}
+
+void openFolderInExplorer() {
+    const char* path = currentPath.string().c_str();
+
+    ShellExecuteA(NULL, "open", path, NULL, NULL, SW_SHOWDEFAULT);
+}
 
 bool generateBackgroundPaths() {
-    static bool first_init = true;
-    if (!first_init) { return true; }
-    else             { first_init = false; }
+    if (!firstPathInit) return true;
+    else firstPathInit = false;
 
-    auto current_path = fs::current_path();
-    current_path += "\\Resources\\backgrounds";
-
-    if (!std::filesystem::is_directory(current_path)) {
-        return false;
+    if (!fs::is_directory(currentPath)) {
+        if (!fs::create_directory(currentPath)) return false;
     }
 
-    for (const auto& filename : fs::directory_iterator(current_path)) {
+    for (const auto& filename : fs::directory_iterator(currentPath)) {
         backgroundPaths.push_back(filename.path().generic_string());
     }
     
@@ -60,7 +71,7 @@ const char* getRandomBackground() {
 }
 
 CCSprite* createBackground(const char* backgroundPath) {
-    current_background_path = backgroundPath;
+    currentBackgroundPath = backgroundPath;
 
     auto bg = CCSprite::create(backgroundPath); 
     auto winSize = CCDirector::get()->getWinSize();
@@ -78,7 +89,7 @@ CCSprite* createBackground(const char* backgroundPath) {
 }
 
 void changeImage(const char* backgroundPath, CCSprite* bg) {
-    current_background_path = backgroundPath;
+    currentBackgroundPath = backgroundPath;
     bg->initWithFile(backgroundPath);
 
     auto winSize = CCDirector::get()->getWinSize();
@@ -95,47 +106,93 @@ void changeImage(const char* backgroundPath, CCSprite* bg) {
 
 class $modify(CustomMenuLayer, MenuLayer) {
 
-    bool init() {
-        if (!generateBackgroundPaths()) {
-            return MenuLayer::init();
-        }
+bool init() {
+    initPath();
 
-        unsigned int bgPathsSize = backgroundPaths.size();
-
-        if (bgPathsSize == 0) {
-            return MenuLayer::init();
-        }
-
-        bg = createBackground(getRandomBackground());
-        next_bg = CCSprite::create();
-
-        this->addChild(bg);
-        this->addChild(next_bg);
-
-        if (!MenuLayer::init()) {
-            return false;
-        }
-
-        this->getChildren()->removeObjectAtIndex(2);
-
-        if (bgPathsSize == 1) {
-            return true;
-        }
-
-        this->schedule(
-            schedule_selector(CustomMenuLayer::changeBackgroundWithOpacity),
-            8.f, kCCRepeatForever, -4.f
-        );
-
-        return true;
+    if (!generateBackgroundPaths()) {
+        return MenuLayer::init();
     }
 
-    void changeBackgroundWithOpacity(float) {
-        changeImage(current_background_path, next_bg);
-        changeImage(getRandomBackground(), bg);
+    unsigned int bgPathsSize = backgroundPaths.size();
 
-        next_bg->setOpacity(255);
-        next_bg->runAction(CCFadeOut::create(4));
+    if (bgPathsSize == 0) {
+        return MenuLayer::init();
     }
+
+    bg = createBackground(getRandomBackground());
+    nextBg = CCSprite::create();
+
+    this->addChild(bg);
+    this->addChild(nextBg);
+
+    if (!MenuLayer::init()) {
+        return false;
+    }
+
+    this->getChildren()->removeObjectAtIndex(2);
+
+    this->schedule(
+        schedule_selector(CustomMenuLayer::changeBackgroundWithOpacity),
+        8.f, kCCRepeatForever, -4.f
+    );
+
+    /* Buttons */
+    restartBtnSpr = CCSprite::createWithSpriteFrameName(
+        "GJ_replayBtn_001.png"
+    );
+    openFolderBtnSpr = CircleButtonSprite::createWithSpriteFrameName(
+        "gj_folderBtn_001.png"
+    );
+
+    if (!restartBtnSpr or !openFolderBtnSpr) return false;
+
+    restartBtn = CCMenuItemSpriteExtra::create(
+        restartBtnSpr, this, 
+        menu_selector(CustomMenuLayer::onButton)
+    );
+
+    openFolderBtn = CCMenuItemSpriteExtra::create(
+        openFolderBtnSpr, this, 
+        menu_selector(CustomMenuLayer::onButton)
+    );
+
+    if (!restartBtn or !openFolderBtn) return false;
+
+    restartBtn->setTag(1);
+    openFolderBtn->setTag(2);
+
+    auto sideMenu = this->getChildByID("side-menu");
+    sideMenu->addChild(restartBtn);
+    sideMenu->addChild(openFolderBtn);
+    sideMenu->updateLayout();
+
+    return true;
+}
+
+void changeBackgroundWithOpacity(float) {
+    changeImage(currentBackgroundPath, nextBg);
+    changeImage(getRandomBackground(), bg);
+
+    nextBg->setOpacity(255);
+    nextBg->runAction(CCFadeOut::create(4));
+}
+
+public:
+
+void onButton(CCObject* sender) {
+    auto btn = static_cast<CCMenuItemSpriteExtra*>(sender);
+    switch (btn->getTag()) {
+        case 1:
+            firstPathInit = true;
+            backgroundPaths.clear();
+            generateBackgroundPaths();
+            break;
+        case 2:
+            openFolderInExplorer();
+            break;
+        default:
+            return;
+    }
+}
 
 };
