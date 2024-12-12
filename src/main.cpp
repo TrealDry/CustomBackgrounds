@@ -1,141 +1,160 @@
-#include <ctime>
-#include <string>
-#include <vector>
-#include <random>
-#include <filesystem>
-
 #include <Geode/Geode.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 
-using namespace geode::prelude;
-namespace fs = std::filesystem;
+#include <vector>
+#include <random>
+#include <string>
+#include <filesystem>
 
+using namespace geode;
+using namespace geode::prelude;
+
+namespace fs = std::filesystem;
 
 std::random_device rd;
 std::mt19937 gen(rd());
 
-std::vector<std::string> backgroundPaths;
+class backgroundNode : public CCNode {
+private:
 
-enum class bgStatus {OK = 1, Transition};
-bgStatus status = bgStatus::OK;
+CCSprite* m_currentBg;
+float m_fadeOutTime = 2.f;
+float m_bgChangeTime = 2.f;
 
-CCSprite *bg, *next_bg;
+public:
 
-float bgOpacity = 0.f;
+virtual bool init(std::vector<std::string>* bgPaths) {
+    if (!CCNode::init()) return false;
+    if (bgPaths == nullptr or bgPaths->size() == 0) return false;
 
-const char* current_background_path;
+    auto winSize = CCDirector::get()->getWinSize();
 
+    for (auto& path : *bgPaths) {
+        auto sprite = CCSprite::create(path.c_str());
 
-bool generateBackgroundPaths() {
-    static bool first_init = true;
-    if (!first_init) { return true; }
-    else             { first_init = false; }
+        if (!sprite) continue;
 
-    auto current_path = fs::current_path();
-    current_path += "\\Resources\\backgrounds";
+        float proportion[2] = {
+            sprite->getContentWidth() / winSize.width,
+            sprite->getContentHeight() / winSize.height
+        };
+        sprite->setScaleX(1.0 / proportion[0]);
+        sprite->setScaleY(1.0 / proportion[1]);
 
-    if (!std::filesystem::is_directory(current_path)) {
-        return false;
+        sprite->setPosition(winSize / 2);
+
+        sprite->setOpacity(0);
+
+        this->addChild(sprite);
     }
 
-    for (const auto& filename : fs::directory_iterator(current_path)) {
-        backgroundPaths.push_back(filename.path().generic_string());
-    }
-    
+    auto currentBg = reinterpret_cast<CCSprite*>(
+        this->getChildren()->objectAtIndex(gen() % this->getChildrenCount())
+    );
+    currentBg->setOpacity(255);
+    m_currentBg = currentBg;
+
     return true;
 }
 
-const char* getRandomBackground() {
-    static std::string previousBackground = "";
-    unsigned int bgPathsSize = backgroundPaths.size();
+void setRandomBg() {
+    auto objArray = this->getChildren();
+    CCSprite* randomBgSprite;
+
+    if (objArray->count() <= 1) return;
 
     while (true) {
-        unsigned int randomIndex = gen() % bgPathsSize;
+        unsigned int randomBg = gen() % this->getChildrenCount();
 
-        if (backgroundPaths[randomIndex] != previousBackground or bgPathsSize == 1) {
-            previousBackground = backgroundPaths[randomIndex];
-            return backgroundPaths[randomIndex].c_str();
-        }
+        randomBgSprite = reinterpret_cast<CCSprite*>(
+            objArray->objectAtIndex(randomBg)
+        );
+
+        if (randomBgSprite != m_currentBg) break;
     }
+
+    unsigned int indexCurrentBg = objArray->indexOfObject(m_currentBg);
+    unsigned int arraySize = this->getChildrenCount();
+    objArray->exchangeObjectAtIndex(indexCurrentBg, arraySize - 1);
+
+    randomBgSprite->setOpacity(255);
+    m_currentBg->runAction(CCFadeOut::create(m_fadeOutTime));
+
+    m_currentBg = randomBgSprite;
 }
 
-CCSprite* createBackground(const char* backgroundPath) {
-    current_background_path = backgroundPath;
-
-    auto bg = CCSprite::create(backgroundPath); 
-    auto winSize = CCDirector::get()->getWinSize();
-
-    float proportion[2] = {
-        bg->getContentWidth() / winSize.width,
-        bg->getContentHeight() / winSize.height
-    };
-    bg->setScaleX(1.0 / proportion[0]);
-    bg->setScaleY(1.0 / proportion[1]);
-
-    bg->setPosition(winSize / 2);
-
-    return bg;
+const float& getFadeOutTime() const {
+    return m_fadeOutTime;
 }
 
-void changeImage(const char* backgroundPath, CCSprite* bg) {
-    current_background_path = backgroundPath;
-    bg->initWithFile(backgroundPath);
-
-    auto winSize = CCDirector::get()->getWinSize();
-
-    float proportion[2] = {
-        bg->getContentWidth() / winSize.width,
-        bg->getContentHeight() / winSize.height
-    };
-    bg->setScaleX(1.0 / proportion[0]);
-    bg->setScaleY(1.0 / proportion[1]);
-
-    bg->setPosition(winSize / 2);
+const float& getBgChangeTime() const {
+    return m_bgChangeTime;
 }
+
+static backgroundNode* create(std::vector<std::string>* bgPaths) {
+    auto ret = new backgroundNode;
+
+    if (ret->init(bgPaths)) {
+        ret->autorelease();
+        return ret;
+    }
+
+    delete ret;
+    return nullptr;
+}
+
+static std::vector<std::string>* generateBgPaths() {
+    auto bgPaths = new std::vector<std::string>;
+
+    fs::path backgroundPath = fs::current_path();
+    backgroundPath += "\\Resources\\backgrounds";
+
+    if (!fs::is_directory(backgroundPath)) {
+        if (!fs::create_directory(backgroundPath)) return nullptr;
+    }
+
+    for (const auto& filename : fs::directory_iterator(backgroundPath)) {
+        bgPaths->push_back(filename.path().generic_string());
+    }
+
+    return bgPaths;
+}
+
+};
+
 
 class $modify(CustomMenuLayer, MenuLayer) {
 
-    bool init() {
-        if (!generateBackgroundPaths()) {
-            return MenuLayer::init();
-        }
+struct Fields {
+    backgroundNode* bg;
+};
 
-        unsigned int bgPathsSize = backgroundPaths.size();
+void setRandomBg(float) {
+    m_fields->bg->setRandomBg();
+}
 
-        if (bgPathsSize == 0) {
-            return MenuLayer::init();
-        }
+bool init() {
+    auto bgPaths = backgroundNode::generateBgPaths();
+    auto bg = backgroundNode::create(bgPaths);
 
-        bg = createBackground(getRandomBackground());
-        next_bg = CCSprite::create();
+    if (bg == nullptr) return MenuLayer::init();
 
-        this->addChild(bg);
-        this->addChild(next_bg);
+    this->addChild(bg);
+    m_fields->bg = bg;
 
-        if (!MenuLayer::init()) {
-            return false;
-        }
+    if (!MenuLayer::init()) return false;
 
-        this->getChildren()->removeObjectAtIndex(2);
+    this->getChildren()->removeObjectAtIndex(1);
 
-        if (bgPathsSize == 1) {
-            return true;
-        }
+    float fadeOutTime = bg->getFadeOutTime();
+    float bgChangeTime = bg->getBgChangeTime();
 
-        this->schedule(
-            schedule_selector(CustomMenuLayer::changeBackgroundWithOpacity),
-            8.f, kCCRepeatForever, -4.f
-        );
+    this->schedule(
+        schedule_selector(CustomMenuLayer::setRandomBg),
+        bgChangeTime + fadeOutTime, kCCRepeatForever, 0.f
+    );
 
-        return true;
-    }
-
-    void changeBackgroundWithOpacity(float) {
-        changeImage(current_background_path, next_bg);
-        changeImage(getRandomBackground(), bg);
-
-        next_bg->setOpacity(255);
-        next_bg->runAction(CCFadeOut::create(4));
-    }
+    return true;
+}
 
 };
